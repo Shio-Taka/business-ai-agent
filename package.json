@@ -1,0 +1,29 @@
+{
+  "name": "business-ai-agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shio-Taka/business-ai-agent.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Shio-Taka/business-ai-agent/issues"
+  },
+  "homepage": "https://github.com/Shio-Taka/business-ai-agent#readme",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0"
+  }
+}
