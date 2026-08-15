@@ -39,6 +39,45 @@ const reservations: Reservation[] = [
   },
 ];
 
+export function reserveRoom(
+  roomId: string,
+  date: string,
+  startTime: string,
+  endTime: string,
+): Room | null {
+  const room = rooms.find((room) => room.id === roomId);
+
+  if (!room) {
+    return null;
+  }
+
+  const hasConflict = reservations.some((reservation) => {
+    return (
+      reservation.roomId === roomId &&
+      reservation.date === date &&
+      isOverlapping(
+        startTime,
+        endTime,
+        reservation.startTime,
+        reservation.endTime,
+      )
+    );
+  });
+
+  if (hasConflict) {
+    return null;
+  }
+
+  reservations.push({
+    roomId,
+    date,
+    startTime,
+    endTime,
+  });
+
+  return room;
+}
+
 function isOverlapping(
   startTime: string,
   endTime: string,
