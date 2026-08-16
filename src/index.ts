@@ -31,7 +31,7 @@ const roomTools = [
         },
         participants: {
           type: "number",
-          description: "参加人数。",
+          description: "参加人数。1以上の整数。",
         },
       },
       required: ["date", "startTime", "endTime", "participants"],
@@ -63,7 +63,7 @@ const roomTools = [
         },
         participants: {
           type: "number",
-          description: "参加人数。",
+          description: "参加人数。1以上の整数。",
         },
       },
       required: ["roomId", "date", "startTime", "endTime"],
@@ -106,17 +106,20 @@ async function main() {
 - 終了時刻
 - 参加人数
 
-「明日」「明後日」「来週月曜日」などの相対的な日付が指定された場合は、
-現在日時を基準に具体的なYYYY-MM-DD形式の日付へ変換してください。
+重要な入力ルール:
 
-必要な情報が不足している場合は、
-不足している情報をユーザーに質問してください。
-
-必要な情報がすべて揃っている場合のみ、
-get_available_rooms を使用して空室を確認してください。
-
-予約を実行する前には、必ずユーザーに確認を求めてください。
-ユーザーの確認なしに book_room を実行してはいけません。
+1. 参加人数は1人以上の整数である必要があります。
+2. 参加人数が0以下の場合は不正な入力です。
+3. 参加人数が0以下の場合、予約日や時間など他の情報が不足していても、
+   まず参加人数を1人以上に修正するようユーザーに伝えてください。
+4. 参加人数が不正な場合は、get_available_roomsを呼び出してはいけません。
+5. 「明日」「明後日」「来週月曜日」などの相対的な日付が指定された場合は、
+   現在日時を基準に具体的なYYYY-MM-DD形式の日付へ変換してください。
+6. 必要な情報が不足している場合は、不足している情報をユーザーに質問してください。
+7. 必要な情報がすべて揃っている場合のみ、
+   get_available_roomsを使用して空室を確認してください。
+8. 予約を実行する前には、必ずユーザーに確認を求めてください。
+9. ユーザーの確認なしにbook_roomを実行してはいけません。
 
 ユーザーの依頼:
 ${userInput}
@@ -170,14 +173,21 @@ ${additionalInput}
 
 「明日」は現在日時を基準に具体的なYYYY-MM-DD形式の日付へ変換してください。
 
+参加人数に関するルール:
+- 参加人数は1人以上の整数である必要があります。
+- 参加人数が0以下の場合は不正な入力です。
+- 参加人数が0以下の場合、予約日や時間など他の情報が不足していても、
+  まず参加人数を1人以上に修正するようユーザーに伝えてください。
+- 参加人数が不正な場合は、get_available_roomsを呼び出してはいけません。
+
 予約に必要な情報がすべて揃った場合は、
-get_available_rooms を使用して空室を確認してください。
+get_available_roomsを使用して空室を確認してください。
 
 必要な情報が不足している場合は、
 不足している情報をユーザーに質問してください。
 
 予約を実行する前には、必ずユーザーに確認を求めてください。
-ユーザーの確認なしに book_room を実行してはいけません。
+ユーザーの確認なしにbook_roomを実行してはいけません。
           `,
           tools: roomTools,
         });
@@ -198,8 +208,14 @@ get_available_rooms を使用して空室を確認してください。
 
       if (toolCall.name === "get_available_rooms") {
         try {
-          if (args.participants === undefined) {
-            throw new Error("参加人数が指定されていません。");
+          if (
+            args.participants === undefined ||
+            !Number.isInteger(args.participants) ||
+            args.participants < 1
+          ) {
+            throw new Error(
+              "参加人数は1人以上の整数で指定してください。",
+            );
           }
 
           const rooms = getAvailableRooms(
