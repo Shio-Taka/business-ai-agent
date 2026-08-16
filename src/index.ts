@@ -75,10 +75,44 @@ async function main() {
   const readline = createInterface({ input, output });
 
   try {
+    const userInput = await readline.question(
+      "会議室の予約内容を入力してください: ",
+    );
+
+    if (!userInput.trim()) {
+      console.log("AI: 予約内容が入力されていません。");
+      return;
+    }
+
+    // 現在日時を日本時間で取得
+    const now = new Date();
+
+    const currentDateTime = now.toLocaleString("ja-JP", {
+      timeZone: "Asia/Tokyo",
+    });
+
     let interaction = await ai.interactions.create({
       model: "gemini-3.6-flash",
-      input:
-        "2026-08-16の14:00から15:00まで、5人で使える会議室を予約したいです。まず空き状況を確認してください。",
+      input: `
+現在日時: ${currentDateTime}
+タイムゾーン: Asia/Tokyo
+
+あなたは会議室予約を支援するAIエージェントです。
+
+ユーザーの依頼内容を確認し、必要な情報を判断してください。
+
+「明日」「明後日」「来週月曜日」などの相対的な日付が指定された場合は、
+現在日時を基準に具体的なYYYY-MM-DD形式の日付へ変換してください。
+
+必要な情報が揃っている場合は、
+get_available_rooms を使用して空室を確認してください。
+
+予約を実行する前には、必ずユーザーに確認を求めてください。
+ユーザーの確認なしに book_room を実行してはいけません。
+
+ユーザーの依頼:
+${userInput}
+      `,
       tools: roomTools,
     });
 
@@ -128,6 +162,7 @@ async function main() {
           console.log(
             `\n${selectedRoom.name}（定員${selectedRoom.capacity}名）を`,
           );
+
           console.log(
             `${args.date} ${args.startTime}〜${args.endTime}で予約します。`,
           );
@@ -157,7 +192,6 @@ async function main() {
           console.log("Tool: book_room");
           console.log("Tool result:", reservation);
 
-          // 予約成功後はGeminiに再判断させず、確定メッセージを表示
           console.log("\nAI: 予約が完了しました。");
           console.log(`会議室: ${reservation.name}`);
           console.log(
@@ -173,6 +207,7 @@ async function main() {
               ? error.message
               : "予期しないエラーが発生しました。",
           );
+
           break;
         }
       }
@@ -214,6 +249,7 @@ async function main() {
               ? error.message
               : "予期しないエラーが発生しました。",
           );
+
           break;
         }
       }
