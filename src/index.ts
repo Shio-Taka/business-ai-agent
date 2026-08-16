@@ -100,30 +100,44 @@ async function main() {
 
     let toolResult: unknown;
 
-    if (toolCall.name === "get_available_rooms") {
-      if (args.participants === undefined) {
-        throw new Error("参加人数が指定されていません。");
-      }
+    try {
+      if (toolCall.name === "get_available_rooms") {
+        if (args.participants === undefined) {
+          throw new Error("参加人数が指定されていません。");
+        }
 
-      toolResult = getAvailableRooms(
-        args.date,
-        args.startTime,
-        args.endTime,
-        args.participants,
-      );
-    } else if (toolCall.name === "book_room") {
-      if (!args.roomId) {
-        throw new Error("roomIdが指定されていません。");
-      }
+        toolResult = getAvailableRooms(
+          args.date,
+          args.startTime,
+          args.endTime,
+          args.participants,
+        );
+      } else if (toolCall.name === "book_room") {
+        if (!args.roomId) {
+          throw new Error("roomIdが指定されていません。");
+        }
 
-      toolResult = reserveRoom(
-        args.roomId,
-        args.date,
-        args.startTime,
-        args.endTime,
-      );
-    } else {
-      throw new Error(`未知のToolです: ${toolCall.name}`);
+        toolResult = reserveRoom(
+          args.roomId,
+          args.date,
+          args.startTime,
+          args.endTime,
+        );
+
+        if (toolResult === null) {
+          throw new Error("指定した会議室は予約できません。");
+        }
+      } else {
+        throw new Error(`未知のToolです: ${toolCall.name}`);
+      }
+    } catch (error) {
+      toolResult = {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "予期しないエラーが発生しました。",
+      };
     }
 
     console.log("Tool result:", toolResult);

@@ -29,7 +29,6 @@ const rooms: Room[] = [
   },
 ];
 
-// 仮の予約データ
 const reservations: Reservation[] = [
   {
     roomId: "room-b",
@@ -38,6 +37,98 @@ const reservations: Reservation[] = [
     endTime: "15:00",
   },
 ];
+
+function isValidDate(date: string): boolean {
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+  if (!datePattern.test(date)) {
+    return false;
+  }
+
+  const parsedDate = new Date(`${date}T00:00:00`);
+
+  return !Number.isNaN(parsedDate.getTime());
+}
+
+function timeToMinutes(time: string): number {
+  const [hours, minutes] = time.split(":").map(Number);
+
+  return hours * 60 + minutes;
+}
+
+function isValidTime(time: string): boolean {
+  const timePattern = /^\d{2}:\d{2}$/;
+
+  if (!timePattern.test(time)) {
+    return false;
+  }
+
+  const minutes = timeToMinutes(time);
+
+  return minutes >= 0 && minutes < 24 * 60;
+}
+
+function validateReservationInput(
+  date: string,
+  startTime: string,
+  endTime: string,
+  participants: number,
+): void {
+  if (!isValidDate(date)) {
+    throw new Error("日付はYYYY-MM-DD形式で指定してください。");
+  }
+
+  if (!isValidTime(startTime) || !isValidTime(endTime)) {
+    throw new Error("時刻はHH:mm形式で指定してください。");
+  }
+
+  if (timeToMinutes(startTime) >= timeToMinutes(endTime)) {
+    throw new Error("開始時刻は終了時刻より前にしてください。");
+  }
+
+  if (!Number.isInteger(participants) || participants <= 0) {
+    throw new Error("参加人数は1人以上の整数で指定してください。");
+  }
+}
+
+function isOverlapping(
+  startTime: string,
+  endTime: string,
+  reservationStart: string,
+  reservationEnd: string,
+): boolean {
+  return startTime < reservationEnd && endTime > reservationStart;
+}
+
+export function getAvailableRooms(
+  date: string,
+  startTime: string,
+  endTime: string,
+  participants: number,
+): Room[] {
+  validateReservationInput(date, startTime, endTime, participants);
+
+  return rooms.filter((room) => {
+    if (room.capacity < participants) {
+      return false;
+    }
+
+    const hasConflict = reservations.some((reservation) => {
+      return (
+        reservation.roomId === room.id &&
+        reservation.date === date &&
+        isOverlapping(
+          startTime,
+          endTime,
+          reservation.startTime,
+          reservation.endTime,
+        )
+      );
+    });
+
+    return !hasConflict;
+  });
+}
 
 export function reserveRoom(
   roomId: string,
@@ -76,43 +167,4 @@ export function reserveRoom(
   });
 
   return room;
-}
-
-function isOverlapping(
-  startTime: string,
-  endTime: string,
-  reservationStart: string,
-  reservationEnd: string,
-): boolean {
-  return startTime < reservationEnd && endTime > reservationStart;
-}
-
-export function getAvailableRooms(
-  date: string,
-  startTime: string,
-  endTime: string,
-  participants: number,
-): Room[] {
-  return rooms.filter((room) => {
-    // 収容人数を超える会議室は除外
-    if (room.capacity < participants) {
-      return false;
-    }
-
-    // 指定時間に予約が入っているか確認
-    const hasConflict = reservations.some((reservation) => {
-      return (
-        reservation.roomId === room.id &&
-        reservation.date === date &&
-        isOverlapping(
-          startTime,
-          endTime,
-          reservation.startTime,
-          reservation.endTime,
-        )
-      );
-    });
-
-    return !hasConflict;
-  });
 }
