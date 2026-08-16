@@ -84,7 +84,6 @@ async function main() {
       return;
     }
 
-    // 現在日時を日本時間で取得
     const now = new Date();
 
     const currentDateTime = now.toLocaleString("ja-JP", {
@@ -99,12 +98,21 @@ async function main() {
 
 あなたは会議室予約を支援するAIエージェントです。
 
-ユーザーの依頼内容を確認し、必要な情報を判断してください。
+ユーザーの依頼内容を確認し、予約に必要な情報を判断してください。
+
+必要な情報:
+- 予約日
+- 開始時刻
+- 終了時刻
+- 参加人数
 
 「明日」「明後日」「来週月曜日」などの相対的な日付が指定された場合は、
 現在日時を基準に具体的なYYYY-MM-DD形式の日付へ変換してください。
 
-必要な情報が揃っている場合は、
+必要な情報が不足している場合は、
+不足している情報をユーザーに質問してください。
+
+必要な情報がすべて揃っている場合のみ、
 get_available_rooms を使用して空室を確認してください。
 
 予約を実行する前には、必ずユーザーに確認を求めてください。
@@ -122,8 +130,59 @@ ${userInput}
       );
 
       if (!toolCall || toolCall.type !== "function_call") {
-        console.log("AI:", interaction.output_text);
-        break;
+        const aiMessage = interaction.output_text;
+
+        console.log("AI:", aiMessage);
+
+        const additionalInput = await readline.question(
+          "追加情報を入力してください（終了する場合は「終了」）: ",
+        );
+
+        if (additionalInput.trim() === "終了") {
+          console.log("AI: 予約処理を終了しました。");
+          break;
+        }
+
+        if (!additionalInput.trim()) {
+          console.log("AI: 入力内容が空です。");
+          continue;
+        }
+
+        interaction = await ai.interactions.create({
+          model: "gemini-3.6-flash",
+          input: `
+現在日時: ${currentDateTime}
+タイムゾーン: Asia/Tokyo
+
+あなたは会議室予約を支援するAIエージェントです。
+
+元のユーザーの依頼:
+${userInput}
+
+ユーザーからの追加情報:
+${additionalInput}
+
+重要:
+元のユーザーの依頼と追加情報の両方を合わせて予約内容を判断してください。
+
+元の依頼に「明日」「明後日」「来週月曜日」などの
+相対的な日付が含まれている場合、その情報を必ず維持してください。
+
+「明日」は現在日時を基準に具体的なYYYY-MM-DD形式の日付へ変換してください。
+
+予約に必要な情報がすべて揃った場合は、
+get_available_rooms を使用して空室を確認してください。
+
+必要な情報が不足している場合は、
+不足している情報をユーザーに質問してください。
+
+予約を実行する前には、必ずユーザーに確認を求めてください。
+ユーザーの確認なしに book_room を実行してはいけません。
+          `,
+          tools: roomTools,
+        });
+
+        continue;
       }
 
       console.log("Tool:", toolCall.name);
@@ -176,7 +235,6 @@ ${userInput}
             break;
           }
 
-          // ユーザー確認後、予約を実行
           const reservation = reserveRoom(
             selectedRoom.id,
             args.date,
