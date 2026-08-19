@@ -8,6 +8,8 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
+const MODEL = "gemini-3.6-flash";
+
 const roomTools = [
   {
     type: "function" as const,
@@ -41,7 +43,7 @@ const roomTools = [
     type: "function" as const,
     name: "book_room",
     description:
-      "ユーザーの確認後に、指定した会議室を予約します。",
+      "ユーザーが予約内容を確認した後に、指定された会議室を予約します。ユーザーの確認前には絶対に呼び出してはいけません。",
     parameters: {
       type: "object",
       properties: {
@@ -66,10 +68,59 @@ const roomTools = [
           description: "参加人数。1以上の整数。",
         },
       },
-      required: ["roomId", "date", "startTime", "endTime"],
+      required: [
+        "roomId",
+        "date",
+        "startTime",
+        "endTime",
+        "participants",
+      ],
     },
   },
 ];
+
+type ReservationArgs = {
+  date: string;
+  startTime: string;
+  endTime: string;
+  participants?: number;
+  roomId?: string;
+};
+
+function getSystemInstruction(currentDateTime: string) {
+  return `
+現在日時: ${currentDateTime}
+タイムゾーン: Asia/Tokyo
+
+あなたは会議室予約を支援するAIエージェントです。
+
+ユーザーの依頼内容を確認し、予約に必要な情報を判断してください。
+
+必要な情報:
+- 予約日
+- 開始時刻
+- 終了時刻
+- 参加人数
+
+重要な入力ルール:
+
+1. 参加人数は1人以上の整数である必要があります。
+2. 参加人数が0以下の場合は不正な入力です。
+3. 参加人数が不正な場合は、get_available_roomsを呼び出してはいけません。
+4. 不正な参加人数が入力された場合、ユーザーが正しい参加人数を入力するまで予約処理を進めないでください。
+5. ユーザーが追加情報を入力した場合は、以前の情報と合わせて判断してください。
+6. 追加情報で以前の値が修正された場合は、最新の値を使用してください。
+7. 「明日」「明後日」「来週月曜日」などの相対的な日付が指定された場合は、現在日時を基準にYYYY-MM-DD形式へ変換してください。
+8. 必要な情報が不足している場合は、不足している情報だけをユーザーに質問してください。
+9. 必要な情報がすべて揃った場合のみ、get_available_roomsを使用してください。
+10. get_available_roomsの結果を受け取ったら、利用可能な会議室と予約内容をユーザーに提示し、予約してよいか確認してください。
+11. ユーザーが「はい」「予約して」「お願いします」など、予約を承認した場合のみbook_roomを呼び出してください。
+12. ユーザーが「いいえ」「キャンセル」などと回答した場合はbook_roomを呼び出さず、予約をキャンセルしてください。
+13. ユーザーの確認なしにbook_roomを呼び出してはいけません。
+14. 利用可能な会議室がない場合は、book_roomを呼び出してはいけません。
+15. 予約が完了したら、予約した会議室、日時、参加人数をユーザーに分かりやすく伝えてください。
+`;
+}
 
 async function main() {
   const readline = createInterface({ input, output });
@@ -90,36 +141,13 @@ async function main() {
       timeZone: "Asia/Tokyo",
     });
 
+    /*
+     * 最初のInteraction
+     */
     let interaction = await ai.interactions.create({
-      model: "gemini-3.6-flash",
+      model: MODEL,
       input: `
-現在日時: ${currentDateTime}
-タイムゾーン: Asia/Tokyo
-
-あなたは会議室予約を支援するAIエージェントです。
-
-ユーザーの依頼内容を確認し、予約に必要な情報を判断してください。
-
-必要な情報:
-- 予約日
-- 開始時刻
-- 終了時刻
-- 参加人数
-
-重要な入力ルール:
-
-1. 参加人数は1人以上の整数である必要があります。
-2. 参加人数が0以下の場合は不正な入力です。
-3. 参加人数が0以下の場合、予約日や時間など他の情報が不足していても、
-   まず参加人数を1人以上に修正するようユーザーに伝えてください。
-4. 参加人数が不正な場合は、get_available_roomsを呼び出してはいけません。
-5. 「明日」「明後日」「来週月曜日」などの相対的な日付が指定された場合は、
-   現在日時を基準に具体的なYYYY-MM-DD形式の日付へ変換してください。
-6. 必要な情報が不足している場合は、不足している情報をユーザーに質問してください。
-7. 必要な情報がすべて揃っている場合のみ、
-   get_available_roomsを使用して空室を確認してください。
-8. 予約を実行する前には、必ずユーザーに確認を求めてください。
-9. ユーザーの確認なしにbook_roomを実行してはいけません。
+${getSystemInstruction(currentDateTime)}
 
 ユーザーの依頼:
 ${userInput}
@@ -127,15 +155,25 @@ ${userInput}
       tools: roomTools,
     });
 
+    /*
+     * エージェントループ
+     */
     while (true) {
       const toolCall = interaction.steps.find(
         (step) => step.type === "function_call",
       );
 
+      /*
+       * Tool Callがない場合
+       *
+       * → Geminiの通常回答を表示
+       * → ユーザーから追加情報を受け取る
+       * → previous_interaction_idで会話を継続
+       */
       if (!toolCall || toolCall.type !== "function_call") {
         const aiMessage = interaction.output_text;
 
-        console.log("AI:", aiMessage);
+        console.log("\nAI:", aiMessage);
 
         const additionalInput = await readline.question(
           "追加情報を入力してください（終了する場合は「終了」）: ",
@@ -152,72 +190,85 @@ ${userInput}
         }
 
         interaction = await ai.interactions.create({
-          model: "gemini-3.6-flash",
-          input: `
-現在日時: ${currentDateTime}
-タイムゾーン: Asia/Tokyo
-
-あなたは会議室予約を支援するAIエージェントです。
-
-元のユーザーの依頼:
-${userInput}
-
-ユーザーからの追加情報:
-${additionalInput}
-
-重要:
-元のユーザーの依頼と追加情報の両方を合わせて予約内容を判断してください。
-
-元の依頼に「明日」「明後日」「来週月曜日」などの
-相対的な日付が含まれている場合、その情報を必ず維持してください。
-
-「明日」は現在日時を基準に具体的なYYYY-MM-DD形式の日付へ変換してください。
-
-参加人数に関するルール:
-- 参加人数は1人以上の整数である必要があります。
-- 参加人数が0以下の場合は不正な入力です。
-- 参加人数が0以下の場合、予約日や時間など他の情報が不足していても、
-  まず参加人数を1人以上に修正するようユーザーに伝えてください。
-- 参加人数が不正な場合は、get_available_roomsを呼び出してはいけません。
-
-予約に必要な情報がすべて揃った場合は、
-get_available_roomsを使用して空室を確認してください。
-
-必要な情報が不足している場合は、
-不足している情報をユーザーに質問してください。
-
-予約を実行する前には、必ずユーザーに確認を求めてください。
-ユーザーの確認なしにbook_roomを実行してはいけません。
-          `,
+          model: MODEL,
+          previous_interaction_id: interaction.id,
+          input: additionalInput,
           tools: roomTools,
+          system_instruction: getSystemInstruction(
+            currentDateTime,
+          ),
         });
 
         continue;
       }
 
-      console.log("Tool:", toolCall.name);
-      console.log("Arguments:", toolCall.arguments);
+      /*
+       * Tool Callを表示
+       */
+      console.log("\nTool:", toolCall.name);
+      console.log(
+        "Arguments:",
+        JSON.stringify(toolCall.arguments, null, 2),
+      );
 
-      const args = toolCall.arguments as {
-        date: string;
-        startTime: string;
-        endTime: string;
-        participants?: number;
-        roomId?: string;
-      };
+      const args = toolCall.arguments as ReservationArgs;
 
+      /*
+       * ==========================================================
+       * get_available_rooms
+       * ==========================================================
+       */
       if (toolCall.name === "get_available_rooms") {
         try {
+          /*
+           * アプリ側でも参加人数を検証する。
+           *
+           * LLMの判断だけに依存せず、
+           * 実際のTool実行前にもバリデーションを行う。
+           */
           if (
             args.participants === undefined ||
             !Number.isInteger(args.participants) ||
             args.participants < 1
           ) {
-            throw new Error(
-              "参加人数は1人以上の整数で指定してください。",
+            const errorResult = {
+              success: false,
+              error:
+                "参加人数は1人以上の整数で指定してください。",
+            };
+
+            console.log(
+              "Tool result:",
+              errorResult,
             );
+
+            interaction = await ai.interactions.create({
+              model: MODEL,
+              previous_interaction_id: interaction.id,
+              input: [
+                {
+                  type: "function_result",
+                  name: toolCall.name,
+                  call_id: toolCall.id,
+                  result: [
+                    {
+                      type: "text",
+                      text: JSON.stringify(errorResult),
+                    },
+                  ],
+                },
+              ],
+              tools: roomTools,
+              system_instruction:
+                getSystemInstruction(currentDateTime),
+            });
+
+            continue;
           }
 
+          /*
+           * 実際の会議室検索
+           */
           const rooms = getAvailableRooms(
             args.date,
             args.startTime,
@@ -227,71 +278,170 @@ get_available_roomsを使用して空室を確認してください。
 
           console.log("Tool result:", rooms);
 
+          /*
+           * 利用可能な部屋がない場合
+           */
           if (rooms.length === 0) {
-            console.log("AI: 利用可能な会議室がありません。");
-            break;
+            const result = {
+              success: false,
+              rooms: [],
+              message: "利用可能な会議室がありません。",
+            };
+
+            interaction = await ai.interactions.create({
+              model: MODEL,
+              previous_interaction_id: interaction.id,
+              input: [
+                {
+                  type: "function_result",
+                  name: toolCall.name,
+                  call_id: toolCall.id,
+                  result: [
+                    {
+                      type: "text",
+                      text: JSON.stringify(result),
+                    },
+                  ],
+                },
+              ],
+              tools: roomTools,
+              system_instruction:
+                getSystemInstruction(currentDateTime),
+            });
+
+            continue;
           }
 
-          const selectedRoom = rooms[0];
+          /*
+           * Toolの結果をGeminiへ返す
+           *
+           * ここがエージェントループの重要部分。
+           */
+          const result = {
+            success: true,
+            rooms,
+          };
 
-          console.log(
-            `\n${selectedRoom.name}（定員${selectedRoom.capacity}名）を`,
-          );
+          interaction = await ai.interactions.create({
+            model: MODEL,
+            previous_interaction_id: interaction.id,
+            input: [
+              {
+                type: "function_result",
+                name: toolCall.name,
+                call_id: toolCall.id,
+                result: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(result),
+                  },
+                ],
+              },
+            ],
+            tools: roomTools,
+            system_instruction:
+              getSystemInstruction(currentDateTime),
+          });
 
-          console.log(
-            `${args.date} ${args.startTime}〜${args.endTime}で予約します。`,
-          );
-
-          const answer = await readline.question(
-            "この予約を実行しますか？（はい / いいえ）: ",
-          );
-
-          if (answer.trim() !== "はい") {
-            console.log("AI: 予約をキャンセルしました。");
-            break;
-          }
-
-          const reservation = reserveRoom(
-            selectedRoom.id,
-            args.date,
-            args.startTime,
-            args.endTime,
-          );
-
-          if (reservation === null) {
-            console.log("AI: 予約に失敗しました。");
-            break;
-          }
-
-          console.log("Tool: book_room");
-          console.log("Tool result:", reservation);
-
-          console.log("\nAI: 予約が完了しました。");
-          console.log(`会議室: ${reservation.name}`);
-          console.log(
-            `日時: ${args.date} ${args.startTime}〜${args.endTime}`,
-          );
-          console.log(`利用人数: ${args.participants}名`);
-
-          break;
+          continue;
         } catch (error) {
           console.log(
-            "AI:",
+            "Tool error:",
             error instanceof Error
               ? error.message
               : "予期しないエラーが発生しました。",
           );
 
-          break;
+          const errorResult = {
+            success: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "予期しないエラーが発生しました。",
+          };
+
+          interaction = await ai.interactions.create({
+            model: MODEL,
+            previous_interaction_id: interaction.id,
+            input: [
+              {
+                type: "function_result",
+                name: toolCall.name,
+                call_id: toolCall.id,
+                result: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(errorResult),
+                  },
+                ],
+              },
+            ],
+            tools: roomTools,
+            system_instruction:
+              getSystemInstruction(currentDateTime),
+          });
+
+          continue;
         }
       }
 
+      /*
+       * ==========================================================
+       * book_room
+       * ==========================================================
+       */
       if (toolCall.name === "book_room") {
         try {
-          if (!args.roomId) {
-            throw new Error("roomIdが指定されていません。");
+          /*
+           * book_room側でも安全のためバリデーション
+           */
+          if (
+            !args.roomId ||
+            !args.date ||
+            !args.startTime ||
+            !args.endTime ||
+            args.participants === undefined ||
+            !Number.isInteger(args.participants) ||
+            args.participants < 1
+          ) {
+            const errorResult = {
+              success: false,
+              error:
+                "予約に必要な情報が正しく指定されていません。",
+            };
+
+            console.log(
+              "Tool result:",
+              errorResult,
+            );
+
+            interaction = await ai.interactions.create({
+              model: MODEL,
+              previous_interaction_id: interaction.id,
+              input: [
+                {
+                  type: "function_result",
+                  name: toolCall.name,
+                  call_id: toolCall.id,
+                  result: [
+                    {
+                      type: "text",
+                      text: JSON.stringify(errorResult),
+                    },
+                  ],
+                },
+              ],
+              tools: roomTools,
+              system_instruction:
+                getSystemInstruction(currentDateTime),
+            });
+
+            continue;
           }
 
+          /*
+           * book_room Toolの実体
+           */
           const reservation = reserveRoom(
             args.roomId,
             args.date,
@@ -299,38 +449,143 @@ get_available_roomsを使用して空室を確認してください。
             args.endTime,
           );
 
-          if (reservation === null) {
-            throw new Error("指定した会議室は予約できません。");
-          }
-
-          console.log("Tool result:", reservation);
-
-          console.log("\nAI: 予約が完了しました。");
-          console.log(`会議室: ${reservation.name}`);
+          console.log("Tool: book_room");
           console.log(
-            `日時: ${args.date} ${args.startTime}〜${args.endTime}`,
+            "Arguments:",
+            JSON.stringify(args, null, 2),
           );
 
-          if (args.participants !== undefined) {
-            console.log(`利用人数: ${args.participants}名`);
+          /*
+           * 予約失敗
+           */
+          if (reservation === null) {
+            const result = {
+              success: false,
+              message:
+                "指定した会議室は予約できませんでした。",
+            };
+
+            console.log("Tool result:", result);
+
+            interaction = await ai.interactions.create({
+              model: MODEL,
+              previous_interaction_id: interaction.id,
+              input: [
+                {
+                  type: "function_result",
+                  name: toolCall.name,
+                  call_id: toolCall.id,
+                  result: [
+                    {
+                      type: "text",
+                      text: JSON.stringify(result),
+                    },
+                  ],
+                },
+              ],
+              tools: roomTools,
+              system_instruction:
+                getSystemInstruction(currentDateTime),
+            });
+
+            continue;
           }
 
-          break;
+          /*
+           * 予約成功
+           */
+          const result = {
+            success: true,
+            reservation: {
+              ...reservation,
+              participants: args.participants,
+            },
+          };
+
+          console.log("Tool result:", result);
+
+          /*
+           * book_roomの結果をGeminiへ返す
+           */
+          interaction = await ai.interactions.create({
+            model: MODEL,
+            previous_interaction_id: interaction.id,
+            input: [
+              {
+                type: "function_result",
+                name: toolCall.name,
+                call_id: toolCall.id,
+                result: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(result),
+                  },
+                ],
+              },
+            ],
+            tools: roomTools,
+            system_instruction:
+              getSystemInstruction(currentDateTime),
+          });
+
+          continue;
         } catch (error) {
           console.log(
-            "AI:",
+            "Tool error:",
             error instanceof Error
               ? error.message
               : "予期しないエラーが発生しました。",
           );
 
-          break;
+          const errorResult = {
+            success: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "予期しないエラーが発生しました。",
+          };
+
+          interaction = await ai.interactions.create({
+            model: MODEL,
+            previous_interaction_id: interaction.id,
+            input: [
+              {
+                type: "function_result",
+                name: toolCall.name,
+                call_id: toolCall.id,
+                result: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(errorResult),
+                  },
+                ],
+              },
+            ],
+            tools: roomTools,
+            system_instruction:
+              getSystemInstruction(currentDateTime),
+          });
+
+          continue;
         }
       }
 
-      console.log(`AI: 未知のToolです: ${toolCall.name}`);
+      /*
+       * 未知のTool
+       */
+      console.log(
+        `AI: 未知のToolです: ${toolCall.name}`,
+      );
+
       break;
     }
+  } catch (error) {
+    console.error(
+      "エラー:",
+      error instanceof Error
+        ? error.message
+        : error,
+    );
   } finally {
     readline.close();
   }
